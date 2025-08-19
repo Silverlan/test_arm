@@ -31,6 +31,7 @@ jobs:
         run: |
           sudo apt-get update
           # install virt-install and libvirt tools. This may not be usable without nested virtualization.
+          apt-get install -y qemu-kvm
           sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
             qemu-system qemu-utils qemu-efi-aarch64 \
             virt-manager virtinst libvirt-daemon-system libvirt-clients bridge-utils
@@ -51,10 +52,12 @@ jobs:
           sudo mkdir -p /var/lib/libvirt/images
           sudo wget -c -O /var/lib/libvirt/images/installer.iso "${ISO_URL}"
 
-      - name: Allocate disk (70GB)
+      - name: Allocate disk (20GB)
         run: |
-          sudo qemu-img create -f qcow2 /var/lib/libvirt/images/ubuntu-arm25.qcow2 70G
-          ls -lh /var/lib/libvirt/images
+          sudo mkdir -p /var/lib/libvirt/images
+          sudo qemu-img create -f qcow2 /var/lib/libvirt/images/ubuntu-arm25.qcow2 20G
+          # list as root so we don't get permission denied
+          sudo ls -la /var/lib/libvirt/images
 
       - name: Run virt-install (best-effort)
         run: |
