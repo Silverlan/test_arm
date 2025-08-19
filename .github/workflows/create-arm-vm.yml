@@ -1,0 +1,85 @@
+name: create-arm-vm
+
+on:
+  workflow_dispatch:
+    inputs:
+      iso_url:
+        description: '(optional) ISO URL to install from. If empty the cloud-image job is used.'
+        required: false
+        default: ''
+      use_virt_install:
+        description: 'set "true" to attempt virt-install (may fail on GitHub-hosted runner)'
+        required: false
+        default: 'false'
+
+jobs:
+  # -----------------------------
+  # Option A: Attempt virt-install (closest to your example)
+  # NOTE: This often fails on github-hosted runners because nested virtualization/libvirt/KVM
+  # is not available. Kept here for completeness.
+  # -----------------------------
+  virt-install-attempt:
+    name: Attempt virt-install (may fail on hosted runner)
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.use_virt_install == 'true' && github.event.inputs.iso_url != '' }}
+    timeout-minutes: 180
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install required packages (virt-install + qemu)
+        run: |
+          sudo apt-get update
+          # install virt-install and libvirt tools. This may not be usable without nested virtualization.
+          sudo DEBIAN_FRONTEND=noninteractive apt-get install -y \
+            qemu-system qemu-utils qemu-efi-aarch64 \
+            virt-manager virtinst libvirt-daemon-system libvirt-clients bridge-utils
+
+      - name: Try to start libvirt
+        run: |
+          # attempt to enable/start libvirt. On hosted runners this may not exist or fail.
+          sudo systemctl enable --now libvirtd || sudo systemctl enable --now libvirt
+          sudo systemctl status libvirtd || true
+          # show qemu and libvirt binaries for debugging
+          which qemu-system-aarch64 || true
+          qemu-system-aarch64 --version || true
+          virsh --version || true
+
+      - name: Download ISO
+        run: |
+          ISO_URL="${{ github.event.inputs.iso_url }}"
+          sudo mkdir -p /var/lib/libvirt/images
+          sudo wget -c -O /var/lib/libvirt/images/installer.iso "${ISO_URL}"
+
+      - name: Allocate disk (70GB)
+        run: |
+          sudo qemu-img create -f qcow2 /var/lib/libvirt/images/ubuntu-arm25.qcow2 70G
+          ls -lh /var/lib/libvirt/images
+
+      - name: Run virt-install (best-effort)
+        run: |
+          set -x
+          # WARNING: this will likely hang or fail if libvirt/KVM are not available.
+          sudo virt-install \
+            --name ubuntu-arm25 \
+            --ram 12288 \
+            --vcpus 4 \
+            --arch aarch64 \
+            --virt-type qemu \
+            --machine virt \
+            --cpu cortex-a57 \
+            --disk path=/var/lib/libvirt/images/ubuntu-arm25.qcow2,size=70,format=qcow2,bus=virtio \
+            --cdrom /var/lib/libvirt/images/installer.iso \
+            --network network=default,model=virtio \
+            --graphics spice \
+            --boot loader=/usr/share/qemu-efi-aarch64/QEMU_EFI.fd,loader_type=pflash,loader_secure=no || true
+
+      - name: Collect logs/artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: virt-install-logs
+          path: |
+            /var/log/libvirt
+            /var/lib/libvirt/images
+            /var/log/syslog
